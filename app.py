@@ -34,7 +34,7 @@ def root_endpoint():
 api = Api(app, 
     title='API Workshop', 
     version='1.0', 
-    description='Simple CRUD API for workshop',
+    description='CRUD API for workshop Bayer IA Team Workshop',
     doc='/hidden/swagger/'
 )
 
@@ -159,7 +159,9 @@ def token_required(f):
             if not token_obj:
                 log_audit(user_email=current_user_email, action='Invalid Token', endpoint=request.endpoint, method=request.method, status=401)
                 return {'status': 401, 'message': 'Token is invalid', 'error_code': 'TOKEN_INVALID'}, 401
-            if token_obj.expires_at < datetime.now(timezone.utc):
+            # Ensure both datetimes are timezone-aware for comparison
+            expires_at_aware = token_obj.expires_at.replace(tzinfo=timezone.utc) if token_obj.expires_at.tzinfo is None else token_obj.expires_at
+            if expires_at_aware < datetime.now(timezone.utc):
                 token_obj.is_active = False
                 db.session.commit()
                 log_audit(user_email=current_user_email, action='Token Expired', endpoint=request.endpoint, method=request.method, status=401)
@@ -198,7 +200,8 @@ token_response_model = api.model('TokenResponse', {
     'status': fields.Integer(description='HTTP status code', example=200),
     'token': fields.String(description='JWT token', example='eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...'),
     'expires_at': fields.String(description='Token expiration time', example='2023-07-18T15:30:00Z'),
-    'message': fields.String(description='Success message', example='Token generated successfully')
+    'message': fields.String(description='Success message', example='Token generated successfully'),
+    'task 1': fields.String(description='Task 1 endpoint', example='/task1')
 })
 
 task1_response_model = api.model('Task1Response', {
@@ -280,7 +283,6 @@ class Welcome(Resource):
 @auth_ns.route('/auth/token')
 class AuthToken(Resource):
     @auth_ns.expect(auth_model)
-    @auth_ns.marshal_with(token_response_model)
     @auth_ns.response(200, 'Success', token_response_model)
     @auth_ns.response(400, 'Bad Request', error_model)
     @auth_ns.response(401, 'Unauthorized', error_model)
@@ -288,26 +290,21 @@ class AuthToken(Resource):
     def post(self):
         """Get authentication token using API key"""
         try:
-            # Check for api_key in header first
+            # Check for valid JSON first
+            if not request.is_json:
+                log_audit(action='Malformed JSON', endpoint='/api/auth/token', method='POST', status=400, details='Request is not a valid JSON format')
+                return {'status': 400, 'message': 'Malformed JSON. Please send a valid JSON format, as per initial documentation.', 'error_code': 'MALFORMED_JSON'}, 400
+
             data = request.get_json(silent=True)
-            data_api_key = data.get('api_key')
-            if data_api_key is None:
-                log_audit(action='Invalid API Key (Data)', endpoint='/api/auth/token', method='POST', status=404, details='Missing api_key in request data')
-                return {'status': 404, 'message': 'Your request doesn\'t contain correct \'api_key\' in request data. Check it and try again', 'error_code': 'INVALID_API_KEY_DATA'}, 404
-            else:
-                # Check for valid JSON
-                if not request.is_json:
-                    log_audit(action='Malformed JSON', endpoint='/api/auth/token', method='POST', status=400, details='Request is not a valid JSON format')
-                    return {'status': 400, 'message': 'Malformed JSON. Please send a valid JSON format, as per initial documentation.', 'error_code': 'MALFORMED_JSON'}, 400
-                data = request.get_json(force=True, silent=True)
-                if not data or 'api_key' not in data:
-                    log_audit(action='Missing API Key', endpoint='/api/auth/token', method='POST', status=400, request_data=str(data))
-                    return {'status': 400, 'message': 'API key is required. Please provide your API key', 'error_code': 'API_KEY_REQUIRED'}, 400
-                api_key = data['api_key']
-                user = User.query.filter_by(api_key=api_key).first()
-                if not user:
-                    log_audit(action='Invalid API Key', endpoint='/api/auth/token', method='POST', status=404, request_data=str(data))
-                    return {'status': 404, 'message': 'Invalid API key!!! Check if your key is valid. You should\'ve received your key prior to the workshop.', 'error_code': 'INVALID_API_KEY'}, 404
+            if not data or 'api_key' not in data:
+                log_audit(action='Missing API Key', endpoint='/api/auth/token', method='POST', status=400, request_data=str(data))
+                return {'status': 400, 'message': 'API key is required. Please provide your API key in the JSON body as {"api_key": "YOUR_KEY"}', 'error_code': 'API_KEY_REQUIRED'}, 400
+
+            api_key = data['api_key']
+            user = User.query.filter_by(api_key=api_key).first()
+            if not user:
+                log_audit(action='Invalid API Key', endpoint='/api/auth/token', method='POST', status=404, request_data=str(data))
+                return {'status': 404, 'message': 'Invalid API key!!! Check if your key is valid. You should\'ve received your key prior to the workshop.', 'error_code': 'INVALID_API_KEY'}, 404
 
             # Validate user model fields
             if not user.email:
@@ -351,7 +348,8 @@ class AuthToken(Resource):
                 'status': 200,
                 'token': token,
                 'expires_at': expires_at.isoformat() + 'Z',
-                'message': 'Token generated successfully. You have 5 minutes to use it... Tick-tock!'
+                'message': 'Token generated successfully. You have 5 minutes to use it... Tick-tock!',
+                'task 1': '/api/task1'
             }
 
             log_audit(user_email=user.email, action='Token Generated', endpoint='/api/auth/token', method='POST', status=200, response_data=str(response))
@@ -386,7 +384,7 @@ class Task1(Resource):
                 'task_id': current_user.task_id,
                 'email': current_user.email,
                 'next_endpoint': '/api/task2',
-                'description': 'Use POST request to save this task_id to the tasks table'
+                'description': 'Use POST request to save this task_id to the tasks table. Refer to API.md for more details or ask Bartek :)'
             }
             
             log_audit(user_email=current_user.email, action='Task 1 Completed', 
@@ -449,7 +447,7 @@ class Task2(Resource):
                 'task_record_id': new_task.task_record_id,
                 'message': 'Task saved successfully',
                 'next_endpoint': f'/api/task3/{new_task.task_record_id}',
-                'description': 'Use PUT request to update this record by task_record_id'
+                'description': 'Use PUT request to update this record by task_record_id. Refer to API.md for more details or ask Bartek :)'
             }
             
             log_audit(user_email=current_user.email, action='Task 2 Completed', 
@@ -483,7 +481,7 @@ class Task3(Resource):
                 log_audit(user_email=current_user.email, action='Task 3 Missing Data', 
                          task_record_id=task_record_id, endpoint=f'/api/task3/{task_record_id}', 
                          method='PUT', status=400, request_data=str(data))
-                return {'status': 400, 'message': 'Data field is required. Did you forget \'task_recrod_id\'?', 'error_code': 'DATA_REQUIRED'}, 400
+                return {'status': 400, 'message': 'Data field is required. Did you forget \'task_record_id\'?', 'error_code': 'DATA_REQUIRED'}, 400
             
             # Find task belonging to current user
             task = Task.query.filter_by(task_record_id=task_record_id, email=current_user.email).first()
@@ -491,7 +489,7 @@ class Task3(Resource):
                 log_audit(user_email=current_user.email, action='Task 3 Not Found', 
                          task_record_id=task_record_id, endpoint=f'/api/task3/{task_record_id}', 
                          method='PUT', status=404, request_data=str(data))
-                return {'status': 404, 'message': 'Task not found ny task_id or not owned by you... Check it properly.', 'error_code': 'TASK_NOT_FOUND'}, 404
+                return {'status': 404, 'message': 'Task not found by task_record_id or not owned by you... Check it properly.', 'error_code': 'TASK_NOT_FOUND'}, 404
             
             # Update task
             task.data = data['data']
@@ -600,11 +598,10 @@ def add_user():
         if existing_user:
             return jsonify({'status': 400, 'message': 'User already exists', 'error_code': 'USER_EXISTS'}), 400
         
-        # Create new user
+        # Create new user (certification_id is earned by completing all tasks)
         new_user = User(
             email=email,
-            api_key=generate_api_key(),
-            certification_id=generate_certification_id()
+            api_key=generate_api_key()
         )
         db.session.add(new_user)
         db.session.commit()
